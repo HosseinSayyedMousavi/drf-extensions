@@ -1,5 +1,6 @@
 from rest_framework.relations import HyperlinkedRelatedField, SlugRelatedField
 from django.db import models
+from rest_framework.fields import Field
 
 class ResourceUriField(HyperlinkedRelatedField):
     """
@@ -77,3 +78,61 @@ class SerializedRelatedField(SlugRelatedField):
         return {
             super(SerializedRelatedField, self).to_representation(item): self.display_value(item) for item in queryset
         }
+
+
+class FlexibleField(Field):
+    """
+    A field that allows independent read and write representations.
+
+    Example:
+        category = FlexibleField(
+            read=serializers.SlugRelatedField(
+                slug_field="slug",
+                read_only=True,
+            ),
+            write=serializers.PrimaryKeyRelatedField(
+                queryset=Category.objects.all(),
+            ),
+        )
+    """
+
+    def __init__(self, *, read=None, write=None, **kwargs):
+        if read is None and write is None:
+            raise AssertionError(
+                "FlexibleField requires at least one of 'read' or 'write'."
+            )
+
+        self.read_field = read
+        self.write_field = write
+
+        if read is None:
+            kwargs["write_only"] = True
+        elif write is None:
+            kwargs["read_only"] = True
+
+        super().__init__(**kwargs)
+
+    def bind(self, field_name, parent):
+        super().bind(field_name, parent)
+
+        if self.read_field is not None:
+            self.read_field.bind(field_name, self)
+
+        if self.write_field is not None:
+            self.write_field.bind(field_name, self)
+
+    def to_representation(self, value):
+        if self.read_field is None:
+            raise AssertionError(
+                "FlexibleField has no read field."
+            )
+
+        return self.read_field.to_representation(value)
+
+    def to_internal_value(self, data):
+        if self.write_field is None:
+            raise AssertionError(
+                "FlexibleField has no write field."
+            )
+
+        return self.write_field.run_validation(data)
